@@ -1,0 +1,242 @@
+section .data
+    ; Messages and constants
+    max_size equ 1000
+    newline db 10, 0
+    sum_msg db "Sum of integers: ", 0
+    fileerror db "Error opening file or no arguments", 10, 0
+
+section .bss
+    num_array resd max_size  ; Reserve space for 1000 integers
+    num_count resd 1         ; Number of integers in file
+    sum resd 1               ; Store sum
+    file_descriptor resd 1   ; File descriptor
+    int_buffer resb 12       ; Buffer to hold integer to string conversion
+
+section .text
+    global _start
+
+_start:
+    ; Align stack for safety
+    and esp, -16
+
+    ; Check for valid arguments
+    mov eax, [esp]          ; argc (number of arguments)
+    cmp eax, 2              ; Expect at least 2 (program name + file name)
+    jl no_arguments         ; Jump to error if not enough arguments
+
+    ; Open file from command-line argument
+    mov eax, [esp+8]        ; argv[1] - file name pointer
+    call open_file
+
+    ; Read integers from file
+    call read_integers
+
+    ; Sum the integers
+    call sum_integers
+
+    ; Print the sum
+    call print_sum
+
+    ; Close the file
+    call close_file
+
+    ; Exit the program
+    call exit
+
+; -----------------------
+; Handle no arguments
+; -----------------------
+no_arguments:
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, fileerror
+    mov edx, 35
+    int 0x80
+    call exit
+
+; -----------------------
+; Open file
+; -----------------------
+open_file:
+    mov eax, 5              ; sys_open
+    mov ebx, [esp+8]        ; File name from command-line
+    mov ecx, 0              ; Read-only mode
+    mov edx, 0              ; No special flags
+    int 0x80
+
+    ; Check if file was opened successfully
+    cmp eax, 0
+    jl file_error
+
+    mov [file_descriptor], eax
+    ret
+
+file_error:
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, fileerror
+    mov edx, 20
+    int 0x80
+    call exit
+
+; -----------------------
+; Read integers from file
+; -----------------------
+read_integers:
+    mov eax, 3              ; sys_read
+    mov ebx, [file_descriptor]
+    mov ecx, num_array
+    mov edx, 4 * max_size
+    int 0x80
+
+    ; Check if read failed
+    cmp eax, 0
+    jl file_error
+
+    ; Initialize counters
+    xor edi, edi            ; edi = 0 (for array index)
+    mov ecx, num_array
+
+read_loop:
+    cmp byte [ecx], 0
+    je done_reading
+
+    ; Convert string to integer
+    call str_to_int
+
+    ; Store result in array
+    mov [num_array + edi * 4], eax
+    inc edi
+
+    ; Move to next value
+    call next_line
+    jmp read_loop
+
+done_reading:
+    mov [num_count], edi
+    ret
+
+; -----------------------
+; Sum integers
+; -----------------------
+sum_integers:
+    xor eax, eax
+    xor ecx, ecx
+
+sum_loop:
+    cmp ecx, [num_count]
+    jge done_sum
+
+    add eax, [num_array + ecx * 4]
+    inc ecx
+    jmp sum_loop
+
+done_sum:
+    mov [sum], eax
+    ret
+
+; -----------------------
+; Print sum
+; -----------------------
+print_sum:
+    ; Print sum message
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, sum_msg
+    mov edx, 18
+    int 0x80
+
+    ; Convert sum to string and print
+    mov eax, [sum]
+    call int_to_str
+
+    ; Print newline
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, newline
+    mov edx, 1
+    int 0x80
+    ret
+
+; -----------------------
+; Close file
+; -----------------------
+close_file:
+    mov eax, 6          ; sys_close
+    mov ebx, [file_descriptor]
+    int 0x80
+    ret
+
+; -----------------------
+; Exit program
+; -----------------------
+exit:
+    mov eax, 1
+    xor ebx, ebx
+    int 0x80
+
+; -----------------------
+; Helper: str_to_int
+; Converts ASCII to integer
+; -----------------------
+str_to_int:
+    xor eax, eax
+    xor ebx, ebx
+    xor edx, edx
+
+convert_loop:
+    movzx edx, byte [ecx]    ; Load byte from string
+    cmp dl, 10               ; Check for newline
+    je end_convert
+    cmp dl, 0
+    je end_convert
+
+    sub edx, '0'             ; Convert ASCII to integer
+    imul eax, eax, 10
+    add eax, edx
+    inc ecx
+    jmp convert_loop
+
+end_convert:
+    ret
+
+; -----------------------
+; Helper: next_line
+; Skip to the next line
+; -----------------------
+next_line:
+    inc ecx
+    cmp byte [ecx], 0
+    je return_next
+    cmp byte [ecx], 10
+    jne next_line
+    inc ecx
+return_next:
+    ret
+
+; -----------------------
+; Helper: int_to_str
+; Converts integer to string
+; -----------------------
+int_to_str:
+    mov ecx, 10
+    xor edx, edx
+    mov edi, 11               ; Start filling from the end of buffer
+
+int_to_str_loop:
+    xor edx, edx
+    div ecx
+    add dl, '0'
+    dec edi
+    mov [int_buffer + edi], dl
+    test eax, eax
+    jnz int_to_str_loop
+
+    ; Print the converted integer
+    mov eax, 4
+    mov ebx, 1
+    lea ecx, [int_buffer + edi]
+    mov edx, 11
+    sub edx, edi
+    int 0x80
+    ret
